@@ -16,6 +16,7 @@ import json
 import random
 import streamlit as st
 from cm_core import get_client as _get_client, grade_answer as _grade_answer, generate_explanation
+from study_advisor import run_study_advisor
 
 st.set_page_config(page_title="Construction Management (CM) Practice", page_icon="🏗️", layout="centered")
 
@@ -53,6 +54,8 @@ if "stage" not in st.session_state:
     st.session_state.last_feedback = None
     st.session_state.last_correct = None
     st.session_state.last_explanation = None
+    st.session_state.session_log = []
+    st.session_state.advisor_result = None
 
 all_questions, topic_names = load_questions()
 
@@ -78,6 +81,8 @@ if st.session_state.stage == "setup":
         st.session_state.score = 0
         st.session_state.stage = "quiz"
         st.session_state.answered = False
+        st.session_state.session_log = []
+        st.session_state.advisor_result = None
         st.rerun()
 
 # ---------- Quiz stage ----------
@@ -115,6 +120,10 @@ elif st.session_state.stage == "quiz":
                 st.session_state.last_correct = correct
                 st.session_state.last_feedback = feedback
                 st.session_state.last_explanation = explanation
+                st.session_state.session_log.append({
+                    "topic": q["topic"],
+                    "was_correct": correct,
+                })
                 if correct:
                     st.session_state.score += 1
                 st.rerun()
@@ -155,6 +164,29 @@ elif st.session_state.stage == "done":
         st.success("🎉 Congratulations, you completed the session!")
         st.metric("Score", f"{score} / {total} correct", f"{pct}%")
 
+        st.divider()
+        st.subheader("🤖 Study Advisor")
+        st.caption(
+            "This uses an agent that checks your performance and the question "
+            "bank on its own, calling tools in a loop, before giving a recommendation."
+        )
+        if st.button("Get personalized study plan"):
+            with st.spinner("Agent is checking your performance and the question bank..."):
+                bank_raw = json.load(open(BANK_FILE, encoding="utf-8"))
+                result, transcript = run_study_advisor(
+                    st.session_state.session_log, bank_raw, client=get_client()
+                )
+                st.session_state.advisor_result = (result, transcript)
+
+        if st.session_state.advisor_result:
+            result, transcript = st.session_state.advisor_result
+            st.info(result)
+            with st.expander("See what the agent checked"):
+                for step in transcript:
+                    st.write(f"**Called `{step['tool']}`** with `{step['input']}`")
+                    st.json(step["result"])
+
     if st.button("Start a new session"):
         st.session_state.stage = "setup"
+        st.session_state.advisor_result = None
         st.rerun()
